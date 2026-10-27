@@ -99,13 +99,13 @@ class SkipService : AccessibilityService() {
         val texts0 = lowered.map { it.text }
         // comment sheet / reply box open: leave it alone
         // "Read or add comments. N comments" is on EVERY post — must not count as the comment sheet
-        val commentsOpen = texts0.any { t ->
-            !t.startsWith("read or add") && (
-                t.startsWith("add comment") || t.startsWith("add a comment") || t.startsWith("reply to ") ||
-                t.startsWith("say something") || t == "reply" || t.endsWith(" replies") ||
-                t == "post" || t.startsWith("view ") && t.contains("repl") ||
-                COMMENT_SCREEN.any { c -> t == c })
-        } || COMMENT_IDS.any { ids.contains(it) }
+        // Comment sheet is its own screen: no "<user> profile" labels, and it has Reply / "View N replies" / Thumbs up.
+        // NOTE "Read or add comments. N comments" is on EVERY post and must never count.
+        val onFeedPost = texts0.any { it.endsWith(" profile") }
+        val commentsOpen = !onFeedPost && texts0.any { t ->
+            t == "reply" || t == "thumbs up" || t.endsWith(" replies") || t.endsWith(" reply") ||
+            t.startsWith("add comment") || t.startsWith("add a comment") || t.startsWith("reply to ") || t.startsWith("say something")
+        }
         if (commentsOpen) { lastSkipSig = ""; retries = 0; return }
 
         val customWords = Prefs.custom.split(",", "\n").map { it.trim().lowercase() }.filter { it.isNotEmpty() }
