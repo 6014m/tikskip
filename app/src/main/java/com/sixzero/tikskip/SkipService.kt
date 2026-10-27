@@ -98,8 +98,14 @@ class SkipService : AccessibilityService() {
         val ids = lowered.mapNotNull { it.id }.joinToString(" ")
         val texts0 = lowered.map { it.text }
         // comment sheet / reply box open: leave it alone
-        val commentsOpen = texts0.any { t -> COMMENT_SCREEN.any { t.contains(it) } || t == "reply" || t.endsWith(" replies") || t.endsWith(" reply") }
-            || COMMENT_IDS.any { ids.contains(it) }
+        // "Read or add comments. N comments" is on EVERY post — must not count as the comment sheet
+        val commentsOpen = texts0.any { t ->
+            !t.startsWith("read or add") && (
+                t.startsWith("add comment") || t.startsWith("add a comment") || t.startsWith("reply to ") ||
+                t.startsWith("say something") || t == "reply" || t.endsWith(" replies") ||
+                t == "post" || t.startsWith("view ") && t.contains("repl") ||
+                COMMENT_SCREEN.any { c -> t == c })
+        } || COMMENT_IDS.any { ids.contains(it) }
         if (commentsOpen) { lastSkipSig = ""; retries = 0; return }
 
         val customWords = Prefs.custom.split(",", "\n").map { it.trim().lowercase() }.filter { it.isNotEmpty() }
