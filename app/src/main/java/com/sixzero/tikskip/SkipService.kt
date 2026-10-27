@@ -3,15 +3,18 @@ package com.sixzero.tikskip
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.graphics.Path
-import android.os.Handler
-import android.os.Looper
+import android.graphics.Rect
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 
 /**
- * Watches the TikTok screen. When the current video's labels say it's an ad,
+ * Watches the TikTok screen. When the current post's labels say it's an ad,
  * a live, a photo slideshow or a still image, swipe up to the next one.
+ *
+ * Approach borrowed from havanphu03032007-cmd/TikTok-Ad-Skipper: scan the node
+ * tree on a fixed interval (not debounced — TikTok never stops firing events),
+ * exact-match short labels, ignore the LIVE tab in the top bar.
  */
 class SkipService : AccessibilityService() {
 
@@ -19,19 +22,32 @@ class SkipService : AccessibilityService() {
         const val TAG = "TikSkip"
         @Volatile var running = false
         @Volatile var lastReason = ""
+        /** Last short strings seen on screen — shown in the app for tuning. */
+        @Volatile var lastSeen: List<String> = emptyList()
+
+        private val TIKTOK = setOf("com.zhiliaoapp.musically", "com.ss.android.ugc.trill", "com.zhiliaoapp.musically.go")
+
+        // exact match, lowercase, trimmed
+        private val AD_EXACT = setOf("sponsored", "ad", "ads", "promoted", "paid partnership", "advertisement", "promotion", "sponsored content")
+        // contained anywhere in a short label (<= 40 chars)
+        private val AD_CONTAINS = listOf("shop now", "learn more", "download now", "install now", "play now", "sign up", "order now", "book now", "get offer", "apply now", "visit site")
+        private val LIVE_EXACT = setOf("live", "live now", "watch live", "en vivo")
+        private val SLIDE_EXACT = setOf("swipe", "photo mode", "slideshow", "swipe for more")
+        private val SLIDE_COUNTER = Regex("^\\d{1,2}\\s*/\\s*\\d{1,2}$")
+        private val SLIDE_IDS = listOf("photo", "slide", "carousel", "image_viewer", "indicator", "dot")
+        private val IMAGE_IDS = listOf("photo", "image", "picture")
+        private val VIDEO_IDS = listOf("video", "surface", "player", "texture")
+        private val COMMENT_SCREEN = listOf("add comment", "reply to", "add a comment", "post comment")
+
+        private const val COOLDOWN_MS = 1200L
+        private const val SCAN_MS = 300L
+        private const val TOP_BAR = 0.15f
+        private const val MAX_DEPTH = 45
     }
 
-    private val handler = Handler(Looper.getMainLooper())
-    private var pendingCheck: Runnable? = null
     private var lastSwipe = 0L
-    private var lastFingerprint = ""
-
-    // Text that marks each kind of post. Case-insensitive. Add to these if TikTok renames things.
-    private val adWords = listOf("sponsored", "promoted", "paid partnership", "advertisement", "shop now", "learn more", "download now", "install now", "tiktok shop", "promotion")
-    private val liveWords = listOf("live", "live now", "is live", "watching", "livestream")
-    private val slideshowWords = listOf("swipe", "photo mode", "/ ", "slideshow", "tap to see")
-    private val slideshowIdHints = listOf("photo", "slide", "carousel", "image_viewer", "indicator")
-    private val imageIdHints = listOf("photo", "image")
+    private var lastScan = 0L
+    private var screenH = 0
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -45,102 +61,59 @@ class SkipService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
-        // debounce: screens change constantly while scrolling; look once it settles
-        pendingCheck?.let { handler.removeCallbacks(it) }
-        val r = Runnable { check() }
-        pendingCheck = r
-        handler.postDelayed(r, Prefs.delayMs)
-    }
+        if (event.packageName?.toString() !in TIKTOK) return
+        val now = System.currentTimeMillis()
+        if (now - lastSwipe < COOLDOWN_MS) return
+        if (now - lastScan < SCAN_MS) return
+        lastScan = now
 
-    private fun check() {
         val root = rootInActiveWindow ?: return
-        try {
-            val texts = ArrayList<String>()
-            val ids = ArrayList<String>()
-            collect(root, texts, ids, 0)
-            val joined = texts.joinToString(" | ").lowercase()
-            val idJoined = ids.joinToString(" | ").lowercase()
+        if (root.packageName?.toString() !in TIKTOK) return
+        screenH = resources.displayMetrics.heightPixels
 
-            // skip re-evaluating the exact same screen (prevents double swipes)
-            val fp = joined.hashCode().toString() + idJoined.hashCode()
-            if (fp == lastFingerprint) return
-            lastFingerprint = fp
+        Prefs.load(this)
+        val seen = ArrayList<Seen>()
+        collect(root, seen, 0)
+        lastSeen = seen.filter { it.text.length in 1..40 }.map { it.text }.distinct().take(60)
 
-            // Only act on the main feed: comments / profile / search pages contain lots of these words legitimately.
-            if (!looksLikeFeed(texts, idJoined)) return
+        val lowered = seen.map { it.copy(text = it.text.lowercase().trim()) }
+        if (lowered.any { s -> COMMENT_SCREEN.any { s.text.contains(it) } }) return  // typing a comment: leave it alone
 
-            val reason = when {
-                Prefs.ads && adWords.any { containsWord(joined, it) } -> "ad"
-                Prefs.lives && isLive(texts, idJoined) -> "live"
-                Prefs.slideshows && isSlideshow(joined, idJoined) -> "slideshow"
-                Prefs.images && isStillImage(joined, idJoined) -> "image"
-                else -> null
-            } ?: return
+        val ids = lowered.mapNotNull { it.id }.joinToString(" ")
 
-            val now = System.currentTimeMillis()
-            if (now - lastSwipe < 900) return
-            lastSwipe = now
-            lastReason = reason
-            Prefs.skipped++; Prefs.save(this)
-            Log.i(TAG, "skip: $reason")
-            swipeUp()
-        } finally {
-            root.recycle()
-        }
+        val reason = when {
+            Prefs.ads && lowered.any { it.text in AD_EXACT || (it.text.length <= 40 && AD_CONTAINS.any { w -> it.text.contains(w) }) } -> "ad"
+            Prefs.lives && lowered.any { it.text in LIVE_EXACT && !it.topBar } -> "live"
+            Prefs.slideshows && (lowered.any { it.text in SLIDE_EXACT || SLIDE_COUNTER.matches(it.text) } || SLIDE_IDS.any { ids.contains(it) }) -> "slideshow"
+            Prefs.images && IMAGE_IDS.any { ids.contains(it) } && VIDEO_IDS.none { ids.contains(it) } -> "image"
+            else -> null
+        } ?: return
+
+        lastSwipe = now
+        lastReason = reason
+        Prefs.skipped++; Prefs.save(this)
+        Log.i(TAG, "skip: $reason")
+        swipeUp()
     }
 
-    private fun looksLikeFeed(texts: List<String>, ids: String): Boolean {
-        // The feed shows like/comment/share counters and a "For You" / "Following" header.
-        val t = texts.joinToString(" ").lowercase()
-        val hasTabs = t.contains("for you") || t.contains("following") || t.contains("friends")
-        val hasActions = ids.contains("like") || ids.contains("comment") || ids.contains("share") || t.contains("comments")
-        val onComments = t.contains("add comment") || t.contains("reply to")
-        return hasTabs && hasActions && !onComments
-    }
+    private data class Seen(val text: String, val id: String?, val topBar: Boolean)
 
-    private fun isLive(texts: List<String>, ids: String): Boolean {
-        // "LIVE" badge is usually its own short node; avoid matching "I'm live in Tokyo" captions
-        val badge = texts.any { s -> val l = s.trim().lowercase(); l == "live" || l == "live now" || l.endsWith(" watching") }
-        return badge || ids.contains("live_") || ids.contains("_live")
-    }
-
-    private fun isSlideshow(joined: String, ids: String): Boolean {
-        // photo carousels show a "1/5"-style counter and dots indicator
-        val counter = Regex("\\b\\d{1,2}\\s*/\\s*\\d{1,2}\\b").containsMatchIn(joined)
-        return counter || slideshowIdHints.any { ids.contains(it) } || joined.contains("photo mode")
-    }
-
-    private fun isStillImage(joined: String, ids: String): Boolean {
-        // single photo posts: image viewer with no video surface
-        val hasImage = imageIdHints.any { ids.contains(it) }
-        val hasVideo = ids.contains("video") || ids.contains("surface") || ids.contains("player")
-        return hasImage && !hasVideo
-    }
-
-    private fun containsWord(hay: String, word: String): Boolean =
-        Regex("(^|[^a-z])" + Regex.escape(word) + "($|[^a-z])").containsMatchIn(hay)
-
-    private fun collect(n: AccessibilityNodeInfo?, texts: MutableList<String>, ids: MutableList<String>, depth: Int) {
-        if (n == null || depth > 40) return
-        n.text?.let { if (it.isNotBlank()) texts.add(it.toString()) }
-        n.contentDescription?.let { if (it.isNotBlank()) texts.add(it.toString()) }
-        n.viewIdResourceName?.let { ids.add(it.substringAfter('/')) }
-        for (i in 0 until n.childCount) {
-            val c = n.getChild(i) ?: continue
-            collect(c, texts, ids, depth + 1)
-            c.recycle()
-        }
+    private fun collect(n: AccessibilityNodeInfo?, out: MutableList<Seen>, depth: Int) {
+        if (n == null || depth > MAX_DEPTH) return
+        val id = n.viewIdResourceName?.substringAfter('/')?.lowercase()
+        val r = Rect(); n.getBoundsInScreen(r)
+        val top = r.top < screenH * TOP_BAR
+        n.text?.toString()?.let { if (it.isNotBlank()) out.add(Seen(it, id, top)) }
+        n.contentDescription?.toString()?.let { if (it.isNotBlank()) out.add(Seen(it, id, top)) }
+        if (id != null && n.text.isNullOrBlank() && n.contentDescription.isNullOrBlank()) out.add(Seen("", id, top))
+        for (i in 0 until n.childCount) collect(n.getChild(i), out, depth + 1)
     }
 
     private fun swipeUp() {
         val dm = resources.displayMetrics
         val x = dm.widthPixels * 0.5f
-        val y1 = dm.heightPixels * 0.72f
-        val y2 = dm.heightPixels * 0.28f
-        val path = Path().apply { moveTo(x, y1); lineTo(x, y2) }
-        val g = GestureDescription.Builder()
-            .addStroke(GestureDescription.StrokeDescription(path, 0, 140))
-            .build()
+        val path = Path().apply { moveTo(x, dm.heightPixels * 0.75f); lineTo(x, dm.heightPixels * 0.25f) }
+        val g = GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(path, 0, 250)).build()
         dispatchGesture(g, null, null)
     }
 }

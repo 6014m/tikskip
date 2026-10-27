@@ -18,6 +18,11 @@ class MainActivity : AppCompatActivity() {
     private lateinit var status: TextView
     private lateinit var enableBtn: TextView
     private lateinit var count: TextView
+    private lateinit var seenView: TextView
+    private val tick = android.os.Handler(android.os.Looper.getMainLooper())
+    private val refresh = object : Runnable {
+        override fun run() { updateStatus(); tick.postDelayed(this, 1000) }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -105,11 +110,31 @@ class MainActivity : AppCompatActivity() {
         count = TextView(this).apply { textSize = 13f; setTextColor(Color.parseColor("#7A7A88")); setPadding(0, dp(28), 0, 0) }
         root.addView(count)
 
+        root.addView(TextView(this).apply {
+            text = "WHAT THE SERVICE SEES RIGHT NOW"; textSize = 11f; setTextColor(Color.parseColor("#7A7A88")); letterSpacing = 0.2f
+            setPadding(0, dp(24), 0, dp(6))
+        })
+        root.addView(TextView(this).apply {
+            text = "open TikTok, come back here. If something wasn't skipped, screenshot this list — the label it should've caught is in it."
+            textSize = 11f; setTextColor(Color.parseColor("#55555F")); setPadding(0, 0, 0, dp(8))
+        })
+        seenView = TextView(this).apply {
+            textSize = 12f; setTextColor(Color.parseColor("#B0B0BC")); typeface = Typeface.MONOSPACE
+            setBackgroundColor(Color.parseColor("#17171D")); setPadding(dp(12), dp(10), dp(12), dp(10))
+        }
+        root.addView(seenView)
+
         setContentView(ScrollView(this).apply { addView(root) })
     }
 
     override fun onResume() {
         super.onResume()
+        tick.post(refresh)
+    }
+
+    override fun onPause() { tick.removeCallbacks(refresh); super.onPause() }
+
+    private fun updateStatus() {
         Prefs.load(this)
         val on = SkipService.running
         status.text = if (on) "● service is ON" else "○ service is OFF — enable it in Accessibility settings"
@@ -118,5 +143,7 @@ class MainActivity : AppCompatActivity() {
         enableBtn.setBackgroundColor(if (on) Color.parseColor("#22222A") else Color.parseColor("#5CE1E6"))
         enableBtn.setTextColor(if (on) Color.WHITE else Color.BLACK)
         count.text = "skipped so far: ${Prefs.skipped}" + (if (SkipService.lastReason.isNotEmpty()) "  •  last: ${SkipService.lastReason}" else "")
+        val seen = SkipService.lastSeen
+        seenView.text = if (seen.isEmpty()) "(nothing yet — service hasn't scanned TikTok)" else seen.joinToString("\n")
     }
 }
