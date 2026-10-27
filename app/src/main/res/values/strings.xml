@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">TikSkip</string>
+    <string name="service_desc">Reads the TikTok screen to detect ads, lives, slideshows and still images, and swipes past them automatically. Only active while TikTok is open.</string>
+</resources>

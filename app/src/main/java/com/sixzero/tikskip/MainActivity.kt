@@ -1,0 +1,122 @@
+package com.sixzero.tikskip
+
+import android.content.Intent
+import android.graphics.Color
+import android.graphics.Typeface
+import android.os.Bundle
+import android.provider.Settings
+import android.view.Gravity
+import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.SeekBar
+import android.widget.Switch
+import android.widget.TextView
+import androidx.appcompat.app.AppCompatActivity
+
+class MainActivity : AppCompatActivity() {
+
+    private lateinit var status: TextView
+    private lateinit var enableBtn: TextView
+    private lateinit var count: TextView
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        Prefs.load(this)
+        val d = resources.displayMetrics.density
+        fun dp(v: Int) = (v * d).toInt()
+
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.parseColor("#0E0E12"))
+            setPadding(dp(20), dp(24), dp(20), dp(24))
+        }
+
+        root.addView(TextView(this).apply {
+            text = "TIKSKIP"; textSize = 22f; setTextColor(Color.WHITE)
+            typeface = Typeface.create("sans-serif-medium", Typeface.BOLD); letterSpacing = 0.25f
+        })
+        root.addView(TextView(this).apply {
+            text = "auto-swipes past the stuff you don't want on your For You page"
+            textSize = 13f; setTextColor(Color.parseColor("#7A7A88")); setPadding(0, dp(4), 0, dp(20))
+        })
+
+        status = TextView(this).apply { textSize = 13f; setPadding(0, 0, 0, dp(10)) }
+        root.addView(status)
+
+        enableBtn = TextView(this).apply {
+            textSize = 14f; gravity = Gravity.CENTER
+            typeface = Typeface.create("sans-serif-medium", Typeface.BOLD); letterSpacing = 0.08f
+            setPadding(0, dp(16), 0, dp(16))
+            setOnClickListener { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
+        }
+        root.addView(enableBtn)
+
+        root.addView(TextView(this).apply {
+            text = "SKIP"; textSize = 11f; setTextColor(Color.parseColor("#7A7A88")); letterSpacing = 0.2f
+            setPadding(0, dp(28), 0, dp(6))
+        })
+
+        fun toggle(label: String, sub: String, get: () -> Boolean, set: (Boolean) -> Unit) {
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+                setBackgroundColor(Color.parseColor("#17171D")); setPadding(dp(16), dp(14), dp(12), dp(14))
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(8) }
+            }
+            val col = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            }
+            col.addView(TextView(this).apply { text = label; textSize = 15f; setTextColor(Color.WHITE) })
+            col.addView(TextView(this).apply { text = sub; textSize = 12f; setTextColor(Color.parseColor("#7A7A88")) })
+            val sw = Switch(this).apply {
+                isChecked = get()
+                setOnCheckedChangeListener { _, v -> set(v); Prefs.save(this@MainActivity) }
+            }
+            row.addView(col); row.addView(sw); root.addView(row)
+        }
+
+        toggle("Ads", "sponsored / promoted / shop posts", { Prefs.ads }) { Prefs.ads = it }
+        toggle("Lives", "livestreams in the feed", { Prefs.lives }) { Prefs.lives = it }
+        toggle("Slideshows", "photo carousels you swipe through", { Prefs.slideshows }) { Prefs.slideshows = it }
+        toggle("Still images", "single photo posts", { Prefs.images }) { Prefs.images = it }
+
+        root.addView(TextView(this).apply {
+            text = "REACTION TIME"; textSize = 11f; setTextColor(Color.parseColor("#7A7A88")); letterSpacing = 0.2f
+            setPadding(0, dp(20), 0, dp(6))
+        })
+        val delayLabel = TextView(this).apply { textSize = 13f; setTextColor(Color.WHITE) }
+        val seek = SeekBar(this).apply {
+            max = 1500; progress = Prefs.delayMs.toInt()
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(sb: SeekBar, p: Int, u: Boolean) {
+                    Prefs.delayMs = maxOf(100, p).toLong(); delayLabel.text = "${Prefs.delayMs} ms after a new video appears"
+                }
+                override fun onStartTrackingTouch(sb: SeekBar) {}
+                override fun onStopTrackingTouch(sb: SeekBar) { Prefs.save(this@MainActivity) }
+            })
+        }
+        delayLabel.text = "${Prefs.delayMs} ms after a new video appears"
+        root.addView(delayLabel); root.addView(seek)
+        root.addView(TextView(this).apply {
+            text = "lower = faster skips but more chance of a false hit while the screen is still loading"
+            textSize = 11f; setTextColor(Color.parseColor("#55555F")); setPadding(0, dp(4), 0, 0)
+        })
+
+        count = TextView(this).apply { textSize = 13f; setTextColor(Color.parseColor("#7A7A88")); setPadding(0, dp(28), 0, 0) }
+        root.addView(count)
+
+        setContentView(ScrollView(this).apply { addView(root) })
+    }
+
+    override fun onResume() {
+        super.onResume()
+        Prefs.load(this)
+        val on = SkipService.running
+        status.text = if (on) "● service is ON" else "○ service is OFF — enable it in Accessibility settings"
+        status.setTextColor(if (on) Color.parseColor("#7CFC9B") else Color.parseColor("#FF5C5C"))
+        enableBtn.text = if (on) "OPEN ACCESSIBILITY SETTINGS" else "ENABLE TIKSKIP"
+        enableBtn.setBackgroundColor(if (on) Color.parseColor("#22222A") else Color.parseColor("#5CE1E6"))
+        enableBtn.setTextColor(if (on) Color.WHITE else Color.BLACK)
+        count.text = "skipped so far: ${Prefs.skipped}" + (if (SkipService.lastReason.isNotEmpty()) "  •  last: ${SkipService.lastReason}" else "")
+    }
+}
