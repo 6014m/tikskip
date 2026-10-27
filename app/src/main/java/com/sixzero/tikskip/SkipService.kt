@@ -43,8 +43,8 @@ class SkipService : AccessibilityService() {
         private val COMMENT_SCREEN = listOf("add comment", "reply to", "add a comment", "post comment", "say something", "view replies", "view more replies", "most liked", "most relevant", "newest", "be the first to comment", "no comments yet", "sort comments")
         private val COMMENT_IDS = listOf("comment_list", "comment_input", "comment_edit", "comment_container", "comment_sheet", "commentlist", "reply_")
 
-        private const val COOLDOWN_MS = 1200L
-        private const val SCAN_MS = 300L
+        private const val COOLDOWN_MS = 900L
+        private const val SCAN_MS = 150L
         private const val TOP_BAR = 0.15f
         private const val MAX_DEPTH = 45
     }
@@ -161,8 +161,9 @@ class SkipService : AccessibilityService() {
     private fun swipeUp() {
         val dm = resources.displayMetrics
         val x = dm.widthPixels * 0.5f
-        val path = Path().apply { moveTo(x, dm.heightPixels * 0.75f); lineTo(x, dm.heightPixels * 0.25f) }
-        val g = GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(path, 0, 250)).build()
+        // fast flick: short duration = high velocity = TikTok snaps to the next post instantly
+        val path = Path().apply { moveTo(x, dm.heightPixels * 0.70f); lineTo(x, dm.heightPixels * 0.30f) }
+        val g = GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(path, 0, 80)).build()
         val ok = dispatchGesture(g, object : GestureResultCallback() {
             override fun onCompleted(gd: GestureDescription?) { note(">>> gesture completed") }
             override fun onCancelled(gd: GestureDescription?) { note(">>> gesture CANCELLED by system") }
