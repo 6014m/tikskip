@@ -52,6 +52,8 @@ class SkipService : AccessibilityService() {
     private var lastSwipe = 0L
     private var lastSkipSig = ""
     private var retries = 0
+    private var curSig = ""
+    private var curSince = 0L
     private var lastScan = 0L
     private var screenH = 0
     private var screenW = 0
@@ -60,10 +62,11 @@ class SkipService : AccessibilityService() {
         super.onServiceConnected()
         Prefs.load(this)
         running = true
+        Notif.show(this)
         Log.i(TAG, "connected")
     }
 
-    override fun onDestroy() { running = false; super.onDestroy() }
+    override fun onDestroy() { running = false; Notif.hide(this); super.onDestroy() }
     override fun onInterrupt() {}
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -117,8 +120,12 @@ class SkipService : AccessibilityService() {
         val slideCounter = texts.any { SLIDE_COUNTER.matches(it) || it in SLIDE_EXACT } || SLIDE_IDS.any { ids.contains(it) }
 
         val sig = texts.firstOrNull { it.endsWith(" profile") } ?: ""
+        if (sig != curSig) { curSig = sig; curSince = now }
 
         val reason = when {
+            !Prefs.enabled && !Prefs.autoScroll -> null
+            Prefs.autoScroll && sig.isNotEmpty() && now - curSince >= Prefs.autoScrollSec * 1000L -> "auto"
+            !Prefs.enabled -> null
             customWords.isNotEmpty() && lowered.any { s -> s.text.length <= 60 && customWords.any { s.text.contains(it) } } -> "custom"
             Prefs.ads && (promotedSound || lowered.any { it.text in AD_EXACT || (it.text.length <= 40 && AD_CONTAINS.any { w -> it.text.contains(w) }) }) -> "ad"
             Prefs.lives && lowered.any { it.text in LIVE_EXACT && !it.topBar } -> "live"
@@ -128,7 +135,7 @@ class SkipService : AccessibilityService() {
         } ?: run { lastSkipSig = ""; retries = 0; return }
 
         // same post still on screen after we swiped: TikTok ate the gesture, try again (max 3)
-        if (sig.isNotEmpty() && sig == lastSkipSig) {
+        if (reason == "auto") { curSince = now } else if (sig.isNotEmpty() && sig == lastSkipSig) {
             if (retries >= 3) return
             retries++
         } else { retries = 0 }

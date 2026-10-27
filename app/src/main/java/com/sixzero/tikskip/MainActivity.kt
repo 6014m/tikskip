@@ -80,10 +80,30 @@ class MainActivity : AppCompatActivity() {
             row.addView(col); row.addView(sw); root.addView(row)
         }
 
+        toggle("Skipper", "master switch — also in the notification", { Prefs.enabled }) { Prefs.enabled = it; Notif.show(this) }
         toggle("Ads", "sponsored / promoted / shop posts", { Prefs.ads }) { Prefs.ads = it }
         toggle("Lives", "livestreams in the feed", { Prefs.lives }) { Prefs.lives = it }
         toggle("Slideshows", "photo carousels (1/5 counter)", { Prefs.slideshows }) { Prefs.slideshows = it }
         toggle("Photo posts", "anything on screen that isn't a video (covers single images + carousels)", { Prefs.images }) { Prefs.images = it }
+
+        root.addView(TextView(this).apply {
+            text = "AUTO-SCROLL"; textSize = 11f; setTextColor(Color.parseColor("#7A7A88")); letterSpacing = 0.2f
+            setPadding(0, dp(20), 0, dp(6))
+        })
+        toggle("Auto-scroll videos", "move to the next video on a timer — toggle from the notification too", { Prefs.autoScroll }) { Prefs.autoScroll = it; Notif.show(this) }
+        val autoLabel = TextView(this).apply { textSize = 13f; setTextColor(Color.WHITE) }
+        val autoSeek = SeekBar(this).apply {
+            max = 60; progress = Prefs.autoScrollSec
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(sb: SeekBar, p: Int, u: Boolean) {
+                    Prefs.autoScrollSec = maxOf(3, p); autoLabel.text = "${Prefs.autoScrollSec} seconds per video"
+                }
+                override fun onStartTrackingTouch(sb: SeekBar) {}
+                override fun onStopTrackingTouch(sb: SeekBar) { Prefs.save(this@MainActivity); Notif.show(this@MainActivity) }
+            })
+        }
+        autoLabel.text = "${Prefs.autoScrollSec} seconds per video"
+        root.addView(autoLabel); root.addView(autoSeek)
 
         root.addView(TextView(this).apply {
             text = "REACTION TIME"; textSize = 11f; setTextColor(Color.parseColor("#7A7A88")); letterSpacing = 0.2f
@@ -165,6 +185,10 @@ class MainActivity : AppCompatActivity() {
         root.addView(seenView)
 
         setContentView(ScrollView(this).apply { addView(root) })
+        if (android.os.Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1)
+        }
     }
 
     override fun onResume() {
@@ -173,6 +197,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onPause() { tick.removeCallbacks(refresh); super.onPause() }
+
+    override fun onRequestPermissionsResult(rc: Int, p: Array<out String>, r: IntArray) {
+        super.onRequestPermissionsResult(rc, p, r)
+        if (SkipService.running) Notif.show(this)
+    }
 
     private fun updateStatus() {
         Prefs.load(this)
