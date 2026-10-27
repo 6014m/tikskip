@@ -40,7 +40,8 @@ class SkipService : AccessibilityService() {
         private val SLIDE_IDS = listOf("photo", "slide", "carousel", "image_viewer", "indicator", "dot")
         private val IMAGE_IDS = listOf("photo", "image", "picture")
         private val VIDEO_IDS = listOf("video", "surface", "player", "texture")
-        private val COMMENT_SCREEN = listOf("add comment", "reply to", "add a comment", "post comment")
+        private val COMMENT_SCREEN = listOf("add comment", "reply to", "add a comment", "post comment", "say something", "view replies", "view more replies", "most liked", "most relevant", "newest", "be the first to comment", "no comments yet", "sort comments")
+        private val COMMENT_IDS = listOf("comment_list", "comment_input", "comment_edit", "comment_container", "comment_sheet", "commentlist", "reply_")
 
         private const val COOLDOWN_MS = 1200L
         private const val SCAN_MS = 300L
@@ -94,9 +95,12 @@ class SkipService : AccessibilityService() {
         }
 
         val lowered = seen.map { it.copy(text = it.text.lowercase().trim()) }
-        if (lowered.any { s -> COMMENT_SCREEN.any { s.text.contains(it) } }) return  // typing a comment: leave it alone
-
         val ids = lowered.mapNotNull { it.id }.joinToString(" ")
+        val texts0 = lowered.map { it.text }
+        // comment sheet / reply box open: leave it alone
+        val commentsOpen = texts0.any { t -> COMMENT_SCREEN.any { t.contains(it) } || t == "reply" || t.endsWith(" replies") || t.endsWith(" reply") }
+            || COMMENT_IDS.any { ids.contains(it) }
+        if (commentsOpen) { lastSkipSig = ""; retries = 0; return }
 
         val customWords = Prefs.custom.split(",", "\n").map { it.trim().lowercase() }.filter { it.isNotEmpty() }
         val texts = lowered.map { it.text }
