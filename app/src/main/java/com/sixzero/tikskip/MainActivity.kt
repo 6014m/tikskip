@@ -90,19 +90,19 @@ class MainActivity : AppCompatActivity() {
             text = "AUTO-SCROLL"; textSize = 11f; setTextColor(Color.parseColor("#7A7A88")); letterSpacing = 0.2f
             setPadding(0, dp(20), 0, dp(6))
         })
-        toggle("Auto-scroll videos", "move to the next video on a timer — toggle from the notification too", { Prefs.autoScroll }) { Prefs.autoScroll = it; Notif.show(this) }
+        toggle("Auto-scroll videos", "next video the moment the current one ends — toggle from the notification too", { Prefs.autoScroll }) { Prefs.autoScroll = it; Notif.show(this) }
         val autoLabel = TextView(this).apply { textSize = 13f; setTextColor(Color.WHITE) }
         val autoSeek = SeekBar(this).apply {
             max = 60; progress = Prefs.autoScrollSec
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(sb: SeekBar, p: Int, u: Boolean) {
-                    Prefs.autoScrollSec = maxOf(3, p); autoLabel.text = "${Prefs.autoScrollSec} seconds per video"
+                    Prefs.autoScrollSec = maxOf(3, p); autoLabel.text = "fallback: ${Prefs.autoScrollSec}s if the video has no progress bar"
                 }
                 override fun onStartTrackingTouch(sb: SeekBar) {}
                 override fun onStopTrackingTouch(sb: SeekBar) { Prefs.save(this@MainActivity); Notif.show(this@MainActivity) }
             })
         }
-        autoLabel.text = "${Prefs.autoScrollSec} seconds per video"
+        autoLabel.text = "fallback: ${Prefs.autoScrollSec}s if the video has no progress bar"
         root.addView(autoLabel); root.addView(autoSeek)
 
         root.addView(TextView(this).apply {
