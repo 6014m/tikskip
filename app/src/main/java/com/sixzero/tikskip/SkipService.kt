@@ -49,6 +49,8 @@ class SkipService : AccessibilityService() {
     }
 
     private var lastSwipe = 0L
+    private var lastSkipSig = ""
+    private var retries = 0
     private var lastScan = 0L
     private var screenH = 0
     private var screenW = 0
@@ -104,6 +106,8 @@ class SkipService : AccessibilityService() {
         val promotedSound = texts.any { it.startsWith("sound: promoted music") || it.contains("promoted music") || it.contains("promotional music") }
         val slideCounter = texts.any { SLIDE_COUNTER.matches(it) || it in SLIDE_EXACT } || SLIDE_IDS.any { ids.contains(it) }
 
+        val sig = texts.firstOrNull { it.endsWith(" profile") } ?: ""
+
         val reason = when {
             customWords.isNotEmpty() && lowered.any { s -> s.text.length <= 60 && customWords.any { s.text.contains(it) } } -> "custom"
             Prefs.ads && (promotedSound || lowered.any { it.text in AD_EXACT || (it.text.length <= 40 && AD_CONTAINS.any { w -> it.text.contains(w) }) }) -> "ad"
@@ -111,10 +115,18 @@ class SkipService : AccessibilityService() {
             Prefs.slideshows && hasActions && (slideCounter || (!hasVideoTag && hasPhotoTag)) -> "slideshow"
             Prefs.images && hasActions && !hasVideoTag -> "image"
             else -> null
-        } ?: return
+        } ?: run { lastSkipSig = ""; retries = 0; return }
+
+        // same post still on screen after we swiped: TikTok ate the gesture, try again (max 3)
+        if (sig.isNotEmpty() && sig == lastSkipSig) {
+            if (retries >= 3) return
+            retries++
+        } else { retries = 0 }
+        lastSkipSig = sig
 
         lastSwipe = now
         lastReason = reason
+        synchronized(history) { history.addLast(now to listOf(">>> SKIP ($reason) retry=$retries on $sig")) }
         Prefs.skipped++; Prefs.save(this)
         Log.i(TAG, "skip: $reason")
         try { (getSystemService(VIBRATOR_SERVICE) as android.os.Vibrator).vibrate(android.os.VibrationEffect.createOneShot(40, 120)) } catch (_: Exception) {}
@@ -141,6 +153,14 @@ class SkipService : AccessibilityService() {
         val x = dm.widthPixels * 0.5f
         val path = Path().apply { moveTo(x, dm.heightPixels * 0.75f); lineTo(x, dm.heightPixels * 0.25f) }
         val g = GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(path, 0, 250)).build()
-        dispatchGesture(g, null, null)
+        val ok = dispatchGesture(g, object : GestureResultCallback() {
+            override fun onCompleted(gd: GestureDescription?) { note(">>> gesture completed") }
+            override fun onCancelled(gd: GestureDescription?) { note(">>> gesture CANCELLED by system") }
+        }, null)
+        if (!ok) note(">>> dispatchGesture returned false")
+    }
+
+    private fun note(msg: String) {
+        synchronized(history) { history.addLast(System.currentTimeMillis() to listOf(msg)); while (history.size > 20) history.removeFirst() }
     }
 }
