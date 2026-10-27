@@ -51,6 +51,7 @@ class SkipService : AccessibilityService() {
     private var lastSwipe = 0L
     private var lastScan = 0L
     private var screenH = 0
+    private var screenW = 0
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -73,10 +74,13 @@ class SkipService : AccessibilityService() {
         val root = rootInActiveWindow ?: return
         if (root.packageName?.toString() !in TIKTOK) return
         screenH = resources.displayMetrics.heightPixels
+        screenW = resources.displayMetrics.widthPixels
 
         Prefs.load(this)
-        val seen = ArrayList<Seen>()
-        collect(root, seen, 0)
+        val all = ArrayList<Seen>()
+        collect(root, all, 0)
+        // TikTok's tree includes the previous/next posts too; only judge what's actually on screen
+        val seen = all.filter { it.onScreen }
         val labels = seen.map { if (it.text.isNotEmpty()) it.text else "#" + (it.id ?: "") }.distinct()
         lastSeen = labels.filter { it.length <= 40 }.take(60)
         scans++
@@ -94,16 +98,18 @@ class SkipService : AccessibilityService() {
 
         val customWords = Prefs.custom.split(",", "\n").map { it.trim().lowercase() }.filter { it.isNotEmpty() }
         val texts = lowered.map { it.text }
-        val hasActions = texts.any { it.startsWith("like video") || it.startsWith("like photo") || it.startsWith("like ") || it.contains("comments") }
-        val hasVideoTag = texts.any { it == "video" }
-        val hasPhotoTag = texts.any { it == "photo" || it == "photos" || it == "image" || it.startsWith("like photo") || it.startsWith("photo ") }
+        val hasActions = texts.any { it.startsWith("like ") || it.startsWith("share ") || it.contains("comments") }
+        val hasVideoTag = texts.any { it == "video" || it.startsWith("like video") || it.startsWith("share video") }
+        val hasPhotoTag = texts.any { it == "photo" || it == "photos" || it == "image" || it.startsWith("like photo") || it.startsWith("share photo") || it.startsWith("photo ") }
+        val promotedSound = texts.any { it.startsWith("sound: promoted music") || it.contains("promoted music") || it.contains("promotional music") }
+        val slideCounter = texts.any { SLIDE_COUNTER.matches(it) || it in SLIDE_EXACT } || SLIDE_IDS.any { ids.contains(it) }
 
         val reason = when {
             customWords.isNotEmpty() && lowered.any { s -> s.text.length <= 60 && customWords.any { s.text.contains(it) } } -> "custom"
-            Prefs.ads && lowered.any { it.text in AD_EXACT || (it.text.length <= 40 && AD_CONTAINS.any { w -> it.text.contains(w) }) } -> "ad"
+            Prefs.ads && (promotedSound || lowered.any { it.text in AD_EXACT || (it.text.length <= 40 && AD_CONTAINS.any { w -> it.text.contains(w) }) }) -> "ad"
             Prefs.lives && lowered.any { it.text in LIVE_EXACT && !it.topBar } -> "live"
-            Prefs.slideshows && (lowered.any { it.text in SLIDE_EXACT || SLIDE_COUNTER.matches(it.text) } || SLIDE_IDS.any { ids.contains(it) }) -> "slideshow"
-            Prefs.images && hasActions && (hasPhotoTag || !hasVideoTag) -> "image"
+            Prefs.slideshows && hasActions && (slideCounter || (!hasVideoTag && hasPhotoTag)) -> "slideshow"
+            Prefs.images && hasActions && !hasVideoTag -> "image"
             else -> null
         } ?: return
 
@@ -111,19 +117,22 @@ class SkipService : AccessibilityService() {
         lastReason = reason
         Prefs.skipped++; Prefs.save(this)
         Log.i(TAG, "skip: $reason")
+        try { (getSystemService(VIBRATOR_SERVICE) as android.os.Vibrator).vibrate(android.os.VibrationEffect.createOneShot(40, 120)) } catch (_: Exception) {}
         swipeUp()
     }
 
-    private data class Seen(val text: String, val id: String?, val topBar: Boolean)
+    private data class Seen(val text: String, val id: String?, val topBar: Boolean, val onScreen: Boolean)
 
     private fun collect(n: AccessibilityNodeInfo?, out: MutableList<Seen>, depth: Int) {
         if (n == null || depth > MAX_DEPTH) return
         val id = n.viewIdResourceName?.substringAfter('/')?.lowercase()
         val r = Rect(); n.getBoundsInScreen(r)
         val top = r.top < screenH * TOP_BAR
-        n.text?.toString()?.let { if (it.isNotBlank()) out.add(Seen(it, id, top)) }
-        n.contentDescription?.toString()?.let { if (it.isNotBlank()) out.add(Seen(it, id, top)) }
-        if (id != null && n.text.isNullOrBlank() && n.contentDescription.isNullOrBlank()) out.add(Seen("", id, top))
+        // a node counts as on screen if most of it is inside the display
+        val on = r.bottom > screenH * 0.05f && r.top < screenH * 0.95f && r.right > 0 && r.left < screenW
+        n.text?.toString()?.let { if (it.isNotBlank()) out.add(Seen(it, id, top, on)) }
+        n.contentDescription?.toString()?.let { if (it.isNotBlank()) out.add(Seen(it, id, top, on)) }
+        if (id != null && n.text.isNullOrBlank() && n.contentDescription.isNullOrBlank()) out.add(Seen("", id, top, on))
         for (i in 0 until n.childCount) collect(n.getChild(i), out, depth + 1)
     }
 

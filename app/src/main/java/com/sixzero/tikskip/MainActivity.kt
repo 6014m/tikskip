@@ -82,8 +82,8 @@ class MainActivity : AppCompatActivity() {
 
         toggle("Ads", "sponsored / promoted / shop posts", { Prefs.ads }) { Prefs.ads = it }
         toggle("Lives", "livestreams in the feed", { Prefs.lives }) { Prefs.lives = it }
-        toggle("Slideshows", "photo carousels you swipe through", { Prefs.slideshows }) { Prefs.slideshows = it }
-        toggle("Still images", "single photo posts", { Prefs.images }) { Prefs.images = it }
+        toggle("Slideshows", "photo carousels (1/5 counter)", { Prefs.slideshows }) { Prefs.slideshows = it }
+        toggle("Photo posts", "anything on screen that isn't a video (covers single images + carousels)", { Prefs.images }) { Prefs.images = it }
 
         root.addView(TextView(this).apply {
             text = "REACTION TIME"; textSize = 11f; setTextColor(Color.parseColor("#7A7A88")); letterSpacing = 0.2f
