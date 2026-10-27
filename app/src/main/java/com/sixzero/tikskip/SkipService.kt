@@ -24,6 +24,9 @@ class SkipService : AccessibilityService() {
         @Volatile var lastReason = ""
         /** Last short strings seen on screen — shown in the app for tuning. */
         @Volatile var lastSeen: List<String> = emptyList()
+        /** Rolling history of distinct label sets, newest last. */
+        val history = ArrayDeque<Pair<Long, List<String>>>()
+        @Volatile var scans = 0
 
         private val TIKTOK = setOf("com.zhiliaoapp.musically", "com.ss.android.ugc.trill", "com.zhiliaoapp.musically.go")
 
@@ -74,18 +77,33 @@ class SkipService : AccessibilityService() {
         Prefs.load(this)
         val seen = ArrayList<Seen>()
         collect(root, seen, 0)
-        lastSeen = seen.filter { it.text.length in 1..40 }.map { it.text }.distinct().take(60)
+        val labels = seen.map { if (it.text.isNotEmpty()) it.text else "#" + (it.id ?: "") }.distinct()
+        lastSeen = labels.filter { it.length <= 40 }.take(60)
+        scans++
+        synchronized(history) {
+            if (history.lastOrNull()?.second != labels) {
+                history.addLast(now to labels)
+                while (history.size > 20) history.removeFirst()
+            }
+        }
 
         val lowered = seen.map { it.copy(text = it.text.lowercase().trim()) }
         if (lowered.any { s -> COMMENT_SCREEN.any { s.text.contains(it) } }) return  // typing a comment: leave it alone
 
         val ids = lowered.mapNotNull { it.id }.joinToString(" ")
 
+        val customWords = Prefs.custom.split(",", "\n").map { it.trim().lowercase() }.filter { it.isNotEmpty() }
+        val texts = lowered.map { it.text }
+        val hasActions = texts.any { it.startsWith("like video") || it.startsWith("like photo") || it.startsWith("like ") || it.contains("comments") }
+        val hasVideoTag = texts.any { it == "video" }
+        val hasPhotoTag = texts.any { it == "photo" || it == "photos" || it == "image" || it.startsWith("like photo") || it.startsWith("photo ") }
+
         val reason = when {
+            customWords.isNotEmpty() && lowered.any { s -> s.text.length <= 60 && customWords.any { s.text.contains(it) } } -> "custom"
             Prefs.ads && lowered.any { it.text in AD_EXACT || (it.text.length <= 40 && AD_CONTAINS.any { w -> it.text.contains(w) }) } -> "ad"
             Prefs.lives && lowered.any { it.text in LIVE_EXACT && !it.topBar } -> "live"
             Prefs.slideshows && (lowered.any { it.text in SLIDE_EXACT || SLIDE_COUNTER.matches(it.text) } || SLIDE_IDS.any { ids.contains(it) }) -> "slideshow"
-            Prefs.images && IMAGE_IDS.any { ids.contains(it) } && VIDEO_IDS.none { ids.contains(it) } -> "image"
+            Prefs.images && hasActions && (hasPhotoTag || !hasVideoTag) -> "image"
             else -> null
         } ?: return
 

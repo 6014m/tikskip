@@ -9,6 +9,7 @@ object Prefs {
     var ads = true; var lives = true; var slideshows = false; var images = false
     var delayMs = 350L
     var skipped = 0
+    var custom = ""
 
     fun load(ctx: Context) {
         val p = sp(ctx)
@@ -18,13 +19,14 @@ object Prefs {
         images = p.getBoolean("images", false)
         delayMs = p.getLong("delay", 350L)
         skipped = p.getInt("skipped", 0)
+        custom = p.getString("custom", "") ?: ""
     }
 
     fun save(ctx: Context) {
         sp(ctx).edit()
             .putBoolean("ads", ads).putBoolean("lives", lives)
             .putBoolean("slideshows", slideshows).putBoolean("images", images)
-            .putLong("delay", delayMs).putInt("skipped", skipped)
+            .putLong("delay", delayMs).putInt("skipped", skipped).putString("custom", custom)
             .apply()
     }
 }

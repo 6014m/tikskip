@@ -107,6 +107,26 @@ class MainActivity : AppCompatActivity() {
             textSize = 11f; setTextColor(Color.parseColor("#55555F")); setPadding(0, dp(4), 0, 0)
         })
 
+        root.addView(TextView(this).apply {
+            text = "EXTRA SKIP WORDS"; textSize = 11f; setTextColor(Color.parseColor("#7A7A88")); letterSpacing = 0.2f
+            setPadding(0, dp(24), 0, dp(6))
+        })
+        root.addView(TextView(this).apply {
+            text = "comma separated. If a post shows a word in the list below and you want it gone, type it here."
+            textSize = 11f; setTextColor(Color.parseColor("#55555F")); setPadding(0, 0, 0, dp(6))
+        })
+        val custom = android.widget.EditText(this).apply {
+            setText(Prefs.custom); hint = "e.g. shop, giveaway, tiktok shop"
+            setTextColor(Color.WHITE); setHintTextColor(Color.parseColor("#55555F")); textSize = 13f
+            setBackgroundColor(Color.parseColor("#17171D")); setPadding(dp(12), dp(12), dp(12), dp(12))
+            addTextChangedListener(object : android.text.TextWatcher {
+                override fun afterTextChanged(e: android.text.Editable?) { Prefs.custom = e?.toString() ?: ""; Prefs.save(this@MainActivity) }
+                override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+                override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            })
+        }
+        root.addView(custom)
+
         count = TextView(this).apply { textSize = 13f; setTextColor(Color.parseColor("#7A7A88")); setPadding(0, dp(28), 0, 0) }
         root.addView(count)
 
@@ -118,6 +138,26 @@ class MainActivity : AppCompatActivity() {
             text = "open TikTok, come back here. If something wasn't skipped, screenshot this list — the label it should've caught is in it."
             textSize = 11f; setTextColor(Color.parseColor("#55555F")); setPadding(0, 0, 0, dp(8))
         })
+        val copyBtn = TextView(this).apply {
+            text = "COPY LOG OF LAST 20 SCREENS"; textSize = 13f; gravity = Gravity.CENTER
+            typeface = Typeface.create("sans-serif-medium", Typeface.BOLD); letterSpacing = 0.08f
+            setBackgroundColor(Color.parseColor("#5CE1E6")); setTextColor(Color.BLACK)
+            setPadding(0, dp(14), 0, dp(14))
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(8) }
+            setOnClickListener {
+                val sb = StringBuilder()
+                synchronized(SkipService.history) {
+                    for ((t, labels) in SkipService.history) {
+                        sb.append("---- ").append(java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(java.util.Date(t))).append('\n')
+                        labels.forEach { sb.append(it).append('\n') }
+                    }
+                }
+                val cm = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                cm.setPrimaryClip(android.content.ClipData.newPlainText("tikskip log", sb.toString()))
+                android.widget.Toast.makeText(this@MainActivity, "copied — paste it to Claude", android.widget.Toast.LENGTH_SHORT).show()
+            }
+        }
+        root.addView(copyBtn)
         seenView = TextView(this).apply {
             textSize = 12f; setTextColor(Color.parseColor("#B0B0BC")); typeface = Typeface.MONOSPACE
             setBackgroundColor(Color.parseColor("#17171D")); setPadding(dp(12), dp(10), dp(12), dp(10))
@@ -142,7 +182,7 @@ class MainActivity : AppCompatActivity() {
         enableBtn.text = if (on) "OPEN ACCESSIBILITY SETTINGS" else "ENABLE TIKSKIP"
         enableBtn.setBackgroundColor(if (on) Color.parseColor("#22222A") else Color.parseColor("#5CE1E6"))
         enableBtn.setTextColor(if (on) Color.WHITE else Color.BLACK)
-        count.text = "skipped so far: ${Prefs.skipped}" + (if (SkipService.lastReason.isNotEmpty()) "  •  last: ${SkipService.lastReason}" else "")
+        count.text = "scans: ${SkipService.scans}  •  skipped: ${Prefs.skipped}" + (if (SkipService.lastReason.isNotEmpty()) "  •  last: ${SkipService.lastReason}" else "")
         val seen = SkipService.lastSeen
         seenView.text = if (seen.isEmpty()) "(nothing yet — service hasn't scanned TikTok)" else seen.joinToString("\n")
     }
