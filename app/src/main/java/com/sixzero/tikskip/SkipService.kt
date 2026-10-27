@@ -57,6 +57,11 @@ class SkipService : AccessibilityService() {
     private var lastProgress = -1f
     private var maxProgress = -1f
     private var sawProgress = false
+    @Volatile private var screenProgress = -1f
+    @Volatile private var screenProgressAt = 0L
+    private var lastLoggedProg = -2f
+    private val watcher by lazy { ProgressWatcher(this) { p -> screenProgress = p; screenProgressAt = System.currentTimeMillis() } }
+    @Volatile private var tiktokForeground = false
     private var lastScan = 0L
     private var screenH = 0
     private var screenW = 0
@@ -69,13 +74,20 @@ class SkipService : AccessibilityService() {
         Log.i(TAG, "connected")
     }
 
-    override fun onDestroy() { running = false; Notif.hide(this); super.onDestroy() }
+    override fun onDestroy() { running = false; watcher.stop(); Notif.hide(this); super.onDestroy() }
     override fun onInterrupt() {}
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
-        if (event.packageName?.toString() !in TIKTOK) return
+        val pkg = event.packageName?.toString()
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && pkg != null) {
+            tiktokForeground = pkg in TIKTOK
+        }
+        if (pkg !in TIKTOK) return
         val now = System.currentTimeMillis()
+        Prefs.load(this)
+        if (Prefs.autoScroll && !watcher.active) watcher.start()
+        if (!Prefs.autoScroll && watcher.active) watcher.stop()
         if (now - lastSwipe < COOLDOWN_MS) return
         if (now - lastScan < SCAN_MS) return
         lastScan = now
@@ -126,7 +138,9 @@ class SkipService : AccessibilityService() {
         if (sig != curSig) { curSig = sig; curSince = now; lastProgress = -1f; maxProgress = -1f; sawProgress = false }
 
         // video end detection: progress bar on the current post wraps from near the end back to the start
-        val prog = seen.filter { it.progress >= 0f && !it.topBar }.maxByOrNull { it.progress }?.progress ?: -1f
+        val a11yProg = seen.filter { it.progress >= 0f && !it.topBar }.maxByOrNull { it.progress }?.progress ?: -1f
+        val prog = if (a11yProg >= 0f) a11yProg else if (now - screenProgressAt < 1500) screenProgress else -1f
+        if (prog >= 0f && kotlin.math.abs(prog - lastLoggedProg) >= 0.05f) { lastLoggedProg = prog; note("~progress ${"%.2f".format(prog)}") }
         var videoEnded = false
         if (prog >= 0f) {
             sawProgress = true
